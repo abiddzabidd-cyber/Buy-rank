@@ -1,201 +1,132 @@
 require("dotenv").config();
-const { 
-    Client, 
-    GatewayIntentBits, 
-    EmbedBuilder, 
-    PermissionsBitField 
+const {
+  Client,
+  GatewayIntentBits,
+  REST,
+  Routes,
+  EmbedBuilder
 } = require("discord.js");
 
-const fs = require("fs");
-
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers
-    ]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers
+  ]
 });
 
-const LOG_CHANNEL_ID = "1473628722870358181";
+/* =========================
+   DAFTAR ROLE & HARGA
+========================= */
 
-const SHOP = {
-    knight: {
-        name: "Knight",
-        price: 5000,
-        roleId: "1473625327879323730"
-    },
-    queen: {
-        name: "Power Queen",
-        price: 15000,
-        roleId: "1473625651486527488"
-    },
-    king: {
-        name: "The Invincible King",
-        price: 30000,
-        roleId: "1473626042504577189"
-    }
+const rolesData = {
+  knight: { name: "Knight", price: 10000 },
+  queen: { name: "Power Queen", price: 20000 },
+  king: { name: "The Invincible King", price: 50000 }
 };
 
-const DATA_FILE = "./database.json";
+/* =========================
+   REGISTER SLASH COMMAND
+========================= */
 
-if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({}));
-}
+const commands = [
+  {
+    name: "store",
+    description: "Melihat daftar role yang tersedia"
+  },
+  {
+    name: "buy",
+    description: "Membeli role",
+    options: [
+      {
+        name: "role",
+        description: "Pilih role yang ingin dibeli",
+        type: 3,
+        required: true,
+        choices: [
+          { name: "Knight", value: "knight" },
+          { name: "Power Queen", value: "queen" },
+          { name: "The Invincible King", value: "king" }
+        ]
+      }
+    ]
+  }
+];
 
-function getData() {
-    return JSON.parse(fs.readFileSync(DATA_FILE));
-}
+const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
-function saveData(data) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
+(async () => {
+  try {
+    console.log("Register slash command...");
+    await rest.put(
+      Routes.applicationGuildCommands(
+        process.env.CLIENT_ID,
+        process.env.GUILD_ID
+      ),
+      { body: commands }
+    );
+    console.log("Slash command berhasil didaftarkan!");
+  } catch (error) {
+    console.error(error);
+  }
+})();
 
-client.once("ready", () => {
-    console.log(`Bot online sebagai ${client.user.tag}`);
+/* =========================
+   BOT READY
+========================= */
+
+client.once("clientReady", () => {
+  console.log(`Bot online sebagai ${client.user.tag}`);
 });
 
-client.on("interactionCreate", async (interaction) => {
-    if (!interaction.isChatInputCommand()) return;
+/* =========================
+   HANDLE COMMAND
+========================= */
 
-    const { commandName } = interaction;
-    const userId = interaction.user.id;
-    const guild = interaction.guild;
-    const member = interaction.member;
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isChatInputCommand()) return;
 
-    let data = getData();
-    if (!data[userId]) {
-        data[userId] = {
-            balance: 0,
-            lastDaily: 0
-        };
+  if (interaction.commandName === "store") {
+    const embed = new EmbedBuilder()
+      .setTitle("🛒 Royal Store")
+      .setDescription(
+        `⚔️ **Knight** - Rp${rolesData.knight.price}\n` +
+        `👑 **Power Queen** - Rp${rolesData.queen.price}\n` +
+        `🔥 **The Invincible King** - Rp${rolesData.king.price}`
+      )
+      .setColor("Gold");
+
+    return interaction.reply({ embeds: [embed] });
+  }
+
+  if (interaction.commandName === "buy") {
+    const selected = interaction.options.getString("role");
+    const roleInfo = rolesData[selected];
+
+    if (!roleInfo) {
+      return interaction.reply({ content: "Role tidak ditemukan!", ephemeral: true });
     }
 
-    // ================= BALANCE =================
-    if (commandName === "balance") {
-        const embed = new EmbedBuilder()
-            .setTitle("💰 Balance")
-            .setColor("Gold")
-            .setDescription(`Coin kamu: **${data[userId].balance}**`);
+    const role = interaction.guild.roles.cache.find(r => r.name === roleInfo.name);
 
-        return interaction.reply({ embeds: [embed] });
+    if (!role) {
+      return interaction.reply({
+        content: `Role **${roleInfo.name}** belum ada di server.`,
+        ephemeral: true
+      });
     }
 
-    // ================= DAILY =================
-    if (commandName === "daily") {
-        const now = Date.now();
-        const cooldown = 24 * 60 * 60 * 1000;
-
-        if (now - data[userId].lastDaily < cooldown) {
-            return interaction.reply({
-                content: "⏳ Kamu sudah klaim daily hari ini!",
-                ephemeral: true
-            });
-        }
-
-        let bonus = 1000;
-
-        if (member.roles.cache.has(SHOP.king.roleId)) bonus = 2000;
-        else if (member.roles.cache.has(SHOP.queen.roleId)) bonus = 1500;
-        else if (member.roles.cache.has(SHOP.knight.roleId)) bonus = 1200;
-
-        data[userId].balance += bonus;
-        data[userId].lastDaily = now;
-        saveData(data);
-
-        const embed = new EmbedBuilder()
-            .setTitle("🎁 Daily Reward")
-            .setColor("Green")
-            .setDescription(`Kamu mendapatkan **${bonus} coin!**`);
-
-        return interaction.reply({ embeds: [embed] });
+    try {
+      await interaction.member.roles.add(role);
+      return interaction.reply(
+        `✅ Berhasil membeli role **${roleInfo.name}** seharga Rp${roleInfo.price}`
+      );
+    } catch (err) {
+      return interaction.reply({
+        content: "❌ Gagal memberi role. Pastikan role bot paling atas.",
+        ephemeral: true
+      });
     }
-
-    // ================= STORE =================
-    if (commandName === "store") {
-        const embed = new EmbedBuilder()
-            .setTitle("🏪 Royal Store")
-            .setColor("Gold")
-            .setDescription(`
-🛡 **Knight** — 5.000 Coin
-👑 **Power Queen** — 15.000 Coin
-🔥 **The Invincible King** — 30.000 Coin
-
-Gunakan:
-/buy knight
-/buy queen
-/buy king
-            `);
-
-        return interaction.reply({ embeds: [embed] });
-    }
-
-    // ================= BUY =================
-    if (commandName === "buy") {
-        const item = interaction.options.getString("role");
-
-        if (!SHOP[item]) {
-            return interaction.reply({
-                content: "Role tidak ditemukan!",
-                ephemeral: true
-            });
-        }
-
-        const roleData = SHOP[item];
-
-        if (data[userId].balance < roleData.price) {
-            return interaction.reply({
-                content: "💸 Coin kamu tidak cukup!",
-                ephemeral: true
-            });
-        }
-
-        const role = guild.roles.cache.get(roleData.roleId);
-        if (!role) {
-            return interaction.reply({
-                content: "Role tidak ditemukan di server!",
-                ephemeral: true
-            });
-        }
-
-        // Hapus semua kasta dulu
-        for (const key in SHOP) {
-            const rId = SHOP[key].roleId;
-            if (member.roles.cache.has(rId)) {
-                await member.roles.remove(rId);
-            }
-        }
-
-        await member.roles.add(role);
-
-        data[userId].balance -= roleData.price;
-        saveData(data);
-
-        const embed = new EmbedBuilder()
-            .setTitle("✅ Pembelian Berhasil")
-            .setColor("Blue")
-            .setDescription(`
-Kamu membeli **${roleData.name}**
-Harga: ${roleData.price} coin
-Sisa saldo: ${data[userId].balance} coin
-            `);
-
-        await interaction.reply({ embeds: [embed] });
-
-        // ===== LOG =====
-        const logChannel = guild.channels.cache.get(LOG_CHANNEL_ID);
-        if (logChannel) {
-            const logEmbed = new EmbedBuilder()
-                .setTitle("🛒 Log Pembelian")
-                .setColor("Red")
-                .setDescription(`
-User: <@${userId}>
-Role: **${roleData.name}**
-Harga: ${roleData.price} coin
-                `)
-                .setTimestamp();
-
-            logChannel.send({ embeds: [logEmbed] });
-        }
-    }
+  }
 });
 
 client.login(process.env.TOKEN);
